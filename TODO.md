@@ -9,11 +9,31 @@
 ## 🎯 Project Vision
 
 Build the **ultimate all-in-one AI coding assistant** for Grim editor in **pure Zig**, featuring:
-- Autocompletes (Copilot-style)
+- Autocompletes (via Github Copilot subscription - Github Copilot API leverage to sign in with github possibly?)
 - Agentic tasks (Claude Code-style)
-- Multi-provider support (Ollama, OpenAI, Claude, Copilot)
+- Multi-provider support (local or remote Ollama defined in config?, OpenAI, Claude, Copilot)
 - Modern gRPC communication
 - OAuth integration (Google, GitHub)
+- For our testing we'll sign in with Google for Claude-Code Max subscription and Github for Copilot functionality and also Google Signin for OpenAI ChatGPT Plus subscription
+- Support for local LLM's via ollama (local ollama or remote ollama server)
+- Contex aware completions (LSP, Git, File context) 
+- Identical experience to mirror Claude-Code.nvim (for our grim editor though) difference being it has your claude max subscription so Claude provided models, Or Github Copilot subscription for copilot completions, premium requests from Various github supplemented models  (claude, gpt-5 codex, grok 1 fast, claude 4.5 sonnet etc.)
+- Essentially a more "open" leverage any AI you want coding assistant like cursor and claude-code.nvim Claude-code.nvim is what we're after with more features and more providers and more configurability. 
+- Better performance 
+- Lower latency 
+- more reliable and secure
+- Full control over what models and subscriptions used. 
+- Eventually leverage glyph or omen (rust projects) 
+- leverage rune (my zig project) that is what will use my glyph rust proejct
+- We'll want it to be claude-code.nvim but Like I said open to any provider and intelligently select best one based on cost, speed, availability, and quality. Request base and will also have agentic capabilities like claude-code. It will be a more open and flexible version of claude-code.nvim but for grim editor. 
+- we'll also want to leverage phantom for the TUI components in grim (chat panel, progress indicator, notifications, diff view, status line, floating windows etc.)
+- use ghostlang for the grim plugin (reaper-client.gza) to handle gRPC communication and UI integration. 
+- use ghost repos for all depedencies (zsync, zrpc, zlog, zcrypto, zquic, zhttp, rune, flare, flash, phantom and zcrate *In GHOST_INTEGRATION.md file for urls*)
+- We'll want context aware and agentic capabilities. AI routing and or provider selection and understand your codebase and maybe save a hidden or not hidden zqlite db just containing understanding of your codebase for future context. Almost like a CLAUDE.md file, To save on future contex gathering costs. 
+- For example, It sees your claude max subscription usage is high, so it switches to github copilot provided models - GPT-5 Codex, Grok 1 Fast, claude sonnet 4.5 (via github instead of claude max so same model different subscription)
+- allow user to specify provider matrix in config file toml or the .gza plugin file - `provider_matrix = { "github": ["gpt-5-codex", "grok-1-fast", "claude-4-5-sonnet"], "claude": ["claude-max"] }`
+- We'll want to leverage ghostspec for unit testing and integration testing.
+- We'll want to leverage zdoc for documentation generation. 
 
 ---
 
@@ -152,6 +172,21 @@ Build the **ultimate all-in-one AI coding assistant** for Grim editor in **pure 
   - Register app at Google Cloud Console
   - Get client_id and client_secret
   - Configure redirect URI
+  - (see github.com/ghostkellz/shade (self hosted rust based oauth server as iDP for google oauth))
+  Example: (.zshrc snippet, or even .gshrc (gshell) bashrc etc.)
+  export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+# Zeke Google Oauth (For claude max)
+export ZEKE_GOOGLE_CLIENT_ID="105202000290-p7oplsq6m8dp5c7n76qgikqchp9ef8fm.apps.googleusercontent.com"
+export ZEKE_GOOGLE_CLIENT_SECRET="GSECRET-HERE"
+export ZEKE_GOOGLE_REDIRECT_URI="https://auth.cktech.org/callback/google"
+
+# Github Oauth
+export ZEKE_GITHUB_CLIENT_ID="SECRET"
+export ZEKE_GITHUB_CLIENT_SECRET="SECRET_HERE"
+export ZEKE_GITHUB_REDIRECT_URI="https://auth.cktech.org/callback/github"
 
 - [ ] **Implement OAuth flow**
   - Start local callback server (port 8080)
@@ -160,7 +195,7 @@ Build the **ultimate all-in-one AI coding assistant** for Grim editor in **pure 
   - Handle callback
   - Exchange code for token
   - Store in vault
-
+  - (zeke uses auth.cktech.org as a third party oauth server to handle oauth for multiple apps, we can do the same (selfhosted shade server auth.cktech.org)
 - [ ] **Token refresh**
   - Detect expired tokens
   - Auto-refresh using refresh_token
@@ -235,6 +270,7 @@ Build the **ultimate all-in-one AI coding assistant** for Grim editor in **pure 
 
 - [ ] **HTTP client setup**
   - Use zhttp or zquic
+  - zhttp primarily for HTTP/3 server support 
   - POST to http://localhost:11434/api/generate
   - Parse JSON response
 
@@ -275,7 +311,7 @@ Build the **ultimate all-in-one AI coding assistant** for Grim editor in **pure 
 - [ ] **Models support**
   - claude-sonnet-4-5
   - claude-opus-4
-  - claude-haiku-3-5
+  - claude-sonnet-4
 
 - [ ] **Message format**
   - Convert to Anthropic message format
