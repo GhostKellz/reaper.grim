@@ -14,7 +14,7 @@ pub const HealthService = struct {
 
     pub const definition = zrpc.service.ServiceDef{
         .name = name,
-        .methods = &.{ Method.check },
+        .methods = &.{Method.check},
     };
 
     pub const Request = struct {

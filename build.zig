@@ -55,7 +55,7 @@ pub fn build(b: *std.Build) void {
     // This will evaluate the `run` step rather than the default step.
     // For a top level step to actually do something, it must depend on other
     // steps (e.g. a Run step, as we will see in a moment).
-    const run_step = b.step("run", "Run the app");
+    const run_step = b.step("run", "Run the CLI interactively");
 
     // This creates a RunArtifact step in the build graph. A RunArtifact step
     // invokes an executable compiled by Zig. Steps will only be executed by the
@@ -75,6 +75,15 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
+
+    const serve_step = b.step("serve", "Start the Reaper daemon in the foreground");
+    const serve_cmd = b.addRunArtifact(exe);
+    serve_cmd.addArgs(&.{ "start", "--foreground" });
+    if (b.args) |args| {
+        serve_cmd.addArgs(args);
+    }
+    serve_cmd.step.dependOn(b.getInstallStep());
+    serve_step.dependOn(&serve_cmd.step);
 
     // Creates an executable that will run `test` blocks from the provided module.
     // Here `mod` needs to define a target, which is why earlier we made sure to

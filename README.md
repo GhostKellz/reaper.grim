@@ -171,12 +171,23 @@ sudo cp zig-out/bin/reaper /usr/local/bin/
 reaper auth google    # For Claude
 reaper auth github    # For Copilot
 
-# 5. Start daemon
+# 5. Start daemon (background mode by default)
 reaper start
 
-# 6. Test
+# 6. Or run in foreground for debugging
+reaper start --foreground
+
+# 7. Test
 reaper complete "fn main() {"
 ```
+
+### 🔄 Daemon lifecycle basics
+
+- `reaper start` launches the daemon in the background, writes a PID file (default: `/tmp/reaper.pid`), and immediately returns control to your shell.
+- `reaper start --foreground` keeps the process attached to your terminal so you can watch logs while developing.
+- `reaper stop` sends a graceful shutdown signal using the PID file; add `--force` to escalate to `SIGKILL` if the process ignores the initial request.
+- If you configure `daemon.health_port`, the daemon exposes a JSON health probe (e.g. `curl http://127.0.0.1:50061/` → `{ "status": "SERVING", "uptime_ms": 1234 }`).
+- Stale PID files are detected automatically—if the recorded PID is gone, the file is cleaned up and a warning is logged instead of crashing your workflow.
 
 ---
 
@@ -185,8 +196,13 @@ reaper complete "fn main() {"
 **reaper.toml:**
 ```toml
 [daemon]
-address = "127.0.0.1:50051"
-log_level = "info"
+host = "127.0.0.1"
+port = 50051
+health_port = 50061
+pid_file = "/tmp/reaper.pid"
+
+[logging]
+level = "info"
 
 [modes]
 completion = true   # Autocompletes

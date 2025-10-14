@@ -113,9 +113,15 @@ fn startHandler(ctx: Context) FlashError!void {
         .runtime = state.runtime,
         .config = state.config,
         .foreground = foreground,
-    }) catch |err| {
-        logging.logger().err("Failed to launch daemon: {s}", .{@errorName(err)});
-        return FlashError.IOError;
+    }) catch |err| switch (err) {
+        error.AlreadyRunning => {
+            logging.logger().warn("Reaper daemon already running; skipping start", .{});
+            return;
+        },
+        else => {
+            logging.logger().err("Failed to launch daemon: {s}", .{@errorName(err)});
+            return FlashError.IOError;
+        },
     };
 }
 
@@ -124,9 +130,15 @@ fn stopHandler(ctx: Context) FlashError!void {
     const force = ctx.getFlag("force");
 
     logging.logger().info("Stopping Reaper daemon (force={})", .{force});
-    server.shutdown(.{ .config = state.config, .force = force }) catch |err| {
-        logging.logger().err("Failed to stop daemon: {s}", .{@errorName(err)});
-        return FlashError.IOError;
+    server.shutdown(.{ .config = state.config, .force = force }) catch |err| switch (err) {
+        error.Timeout => {
+            logging.logger().err("Timed out waiting for daemon to stop", .{});
+            return FlashError.IOError;
+        },
+        else => {
+            logging.logger().err("Failed to stop daemon: {s}", .{@errorName(err)});
+            return FlashError.IOError;
+        },
     };
 }
 
