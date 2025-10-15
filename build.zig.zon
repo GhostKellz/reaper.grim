@@ -56,6 +56,10 @@
             .url = "https://github.com/ghostkellz/gvault/archive/main.tar.gz",
             .hash = "gvault-0.1.0-IScpewB2AwBHqXf_waexg89xPilEh4pSaepRHlQPYlJq",
         },
+        .zhttp = .{
+            .url = "https://github.com/ghostkellz/zhttp/archive/main.tar.gz",
+            .hash = "zhttp-0.1.2-jZpECD6WBQBDZbLNrphEx_zqWSrsT4jyO_Hs9iMDkSQX",
+        },
     },
     .paths = .{
         "build.zig",

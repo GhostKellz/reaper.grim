@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const providers = @import("../providers/provider.zig");
+const gvault = @import("gvault");
 
 pub const Backend = enum { gvault, memory };
 
@@ -36,29 +37,42 @@ pub const SecretRef = struct {
 pub const VaultConfig = struct {
     backend: Backend = .gvault,
     namespace: []const u8 = "reaper",
+    vault_path: []const u8 = "~/.config/reaper/vault",
 };
 
 pub const VaultError = error{
     UnsupportedBackend,
     SecretNotFound,
     Unimplemented,
+    OutOfMemory,
 };
 
 pub const Vault = struct {
     allocator: std.mem.Allocator,
     config: VaultConfig,
     memory_store: ?std.StringHashMap([]u8) = null,
+    gvault_instance: ?*gvault.Vault = null,
 
     pub fn init(allocator: std.mem.Allocator, config: VaultConfig) !Vault {
         var memory_store: ?std.StringHashMap([]u8) = null;
-        if (config.backend == .memory) {
-            memory_store = std.StringHashMap([]u8).init(allocator);
+        var gvault_instance: ?*gvault.Vault = null;
+
+        switch (config.backend) {
+            .memory => {
+                memory_store = std.StringHashMap([]u8).init(allocator);
+            },
+            .gvault => {
+                const vault_ptr = try allocator.create(gvault.Vault);
+                vault_ptr.* = try gvault.Vault.init(allocator, config.vault_path);
+                gvault_instance = vault_ptr;
+            },
         }
 
         return Vault{
             .allocator = allocator,
             .config = config,
             .memory_store = memory_store,
+            .gvault_instance = gvault_instance,
         };
     }
 
@@ -72,6 +86,29 @@ pub const Vault = struct {
             map.deinit();
             self.memory_store = null;
         }
+        if (self.gvault_instance) |vault_ptr| {
+            vault_ptr.deinit();
+            self.allocator.destroy(vault_ptr);
+        }
+    }
+
+    pub fn unlock(self: *Vault, passphrase: []const u8) VaultError!void {
+        if (self.config.backend != .gvault) return;
+        const vault_ptr = self.gvault_instance orelse return VaultError.Unimplemented;
+        vault_ptr.unlock(passphrase) catch return VaultError.Unimplemented;
+    }
+
+    pub fn lock(self: *Vault) void {
+        if (self.gvault_instance) |vault_ptr| {
+            vault_ptr.lock();
+        }
+    }
+
+    pub fn isUnlocked(self: *Vault) bool {
+        if (self.gvault_instance) |vault_ptr| {
+            return vault_ptr.isUnlocked();
+        }
+        return true; // memory backend is always "unlocked"
     }
 
     pub fn store(self: *Vault, ref: SecretRef, value: []const u8) VaultError!void {
@@ -93,7 +130,11 @@ pub const Vault = struct {
                     unreachable; // memory backend requires initialization
                 }
             },
-            .gvault => return VaultError.Unimplemented,
+            .gvault => {
+                const vault_ptr = self.gvault_instance orelse return VaultError.Unimplemented;
+                const cred_type = scopeToCredentialType(ref.scope);
+                _ = vault_ptr.addCredential(key, cred_type, value) catch return VaultError.Unimplemented;
+            },
         }
     }
 
@@ -111,7 +152,15 @@ pub const Vault = struct {
                 }
                 unreachable;
             },
-            .gvault => return VaultError.Unimplemented,
+            .gvault => {
+                const vault_ptr = self.gvault_instance orelse return VaultError.Unimplemented;
+                const creds = vault_ptr.searchCredentials(key) catch return VaultError.SecretNotFound;
+                defer vault_ptr.freeCredentialSlice(creds);
+
+                if (creds.len == 0) return VaultError.SecretNotFound;
+                const cred_id = creds[0].id;
+                return vault_ptr.getCredentialData(cred_id) catch VaultError.SecretNotFound;
+            },
         }
     }
 
@@ -130,7 +179,16 @@ pub const Vault = struct {
                     unreachable;
                 }
             },
-            .gvault => return VaultError.Unimplemented,
+            .gvault => {
+                const vault_ptr = self.gvault_instance orelse return VaultError.Unimplemented;
+                const creds = vault_ptr.searchCredentials(key) catch return;
+                defer vault_ptr.freeCredentialSlice(creds);
+
+                if (creds.len > 0) {
+                    const cred_id = creds[0].id;
+                    vault_ptr.deleteCredential(cred_id) catch {};
+                }
+            },
         }
     }
 
@@ -145,10 +203,24 @@ pub const Vault = struct {
                 }
                 unreachable;
             },
-            .gvault => VaultError.Unimplemented,
+            .gvault => blk: {
+                const vault_ptr = self.gvault_instance orelse break :blk false;
+                const creds = vault_ptr.searchCredentials(key) catch break :blk false;
+                defer vault_ptr.freeCredentialSlice(creds);
+                break :blk creds.len > 0;
+            },
         };
     }
 };
+
+fn scopeToCredentialType(scope: Scope) gvault.CredentialType {
+    return switch (scope) {
+        .api_key => .api_token,
+        .access_token => .api_token,
+        .refresh_token => .api_token,
+        .client_secret => .password,
+    };
+}
 
 pub fn providerSecretRef(kind: providers.Kind, account: []const u8, scope: Scope, variant: ?[]const u8) SecretRef {
     return SecretRef{

@@ -12,6 +12,7 @@ pub const Kind = enum {
     xai,
     azure_openai,
     github_copilot,
+    ollama,
 };
 
 /// Describes the static properties of a provider.
@@ -66,6 +67,10 @@ const copilot_variants = [_][]const u8{
     "copilot[gpt-5-codex]",
 };
 
+const ollama_models = [_][]const u8{
+    // Models are dynamically fetched from local Ollama instance
+};
+
 const descriptor_table = [_]Descriptor{
     .{
         .kind = .openai,
@@ -107,6 +112,14 @@ const descriptor_table = [_]Descriptor{
         .default_capabilities = &caps_completion_chat_agent,
         .default_models = &copilot_models,
         .variants = &copilot_variants,
+    },
+    .{
+        .kind = .ollama,
+        .slug = "ollama",
+        .display_name = "Ollama",
+        .config_key = "providers.ollama",
+        .default_capabilities = &caps_completion_chat,
+        .default_models = &ollama_models,
     },
 };
 

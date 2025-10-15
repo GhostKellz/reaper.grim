@@ -13,8 +13,10 @@ pub fn build(b: *std.Build) void {
     const zsync_dep = b.dependency("zsync", .{ .target = target, .optimize = optimize });
     const zrpc_dep = b.dependency("zrpc", .{ .target = target, .optimize = optimize });
     const zlog_dep = b.dependency("zlog", .{ .target = target, .optimize = optimize });
+    const zhttp_dep = b.dependency("zhttp", .{ .target = target, .optimize = optimize });
     const flare_dep = b.dependency("flare", .{ .target = target, .optimize = optimize });
     const flash_dep = b.dependency("flash", .{ .target = target, .optimize = optimize });
+    const gvault_dep = b.dependency("gvault", .{ .target = target, .optimize = optimize });
 
     const core_module = b.addModule("reaper_grim", .{
         .root_source_file = b.path("src/root.zig"),
@@ -24,8 +26,10 @@ pub fn build(b: *std.Build) void {
     core_module.addImport("zsync", zsync_dep.module("zsync"));
     core_module.addImport("zrpc", zrpc_dep.module("zrpc"));
     core_module.addImport("zlog", zlog_dep.module("zlog"));
+    core_module.addImport("zhttp", zhttp_dep.module("zhttp"));
     core_module.addImport("flare", flare_dep.module("flare"));
     core_module.addImport("flash", flash_dep.module("flash"));
+    core_module.addImport("gvault", gvault_dep.module("gvault"));
 
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -36,8 +40,10 @@ pub fn build(b: *std.Build) void {
     exe_module.addImport("zsync", zsync_dep.module("zsync"));
     exe_module.addImport("zrpc", zrpc_dep.module("zrpc"));
     exe_module.addImport("zlog", zlog_dep.module("zlog"));
+    exe_module.addImport("zhttp", zhttp_dep.module("zhttp"));
     exe_module.addImport("flare", flare_dep.module("flare"));
     exe_module.addImport("flash", flash_dep.module("flash"));
+    exe_module.addImport("gvault", gvault_dep.module("gvault"));
 
     const exe = b.addExecutable(.{
         .name = "reaper",
@@ -107,6 +113,24 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    // Ollama integration test
+    const ollama_test_module = b.createModule(.{
+        .root_source_file = b.path("test_ollama.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    ollama_test_module.addImport("reaper_grim", core_module);
+    ollama_test_module.addImport("zhttp", zhttp_dep.module("zhttp"));
+    ollama_test_module.addImport("gvault", gvault_dep.module("gvault"));
+
+    const ollama_test_exe = b.addExecutable(.{
+        .name = "test_ollama",
+        .root_module = ollama_test_module,
+    });
+    const ollama_test_step = b.step("test-ollama", "Test Ollama provider integration");
+    const run_ollama_test = b.addRunArtifact(ollama_test_exe);
+    ollama_test_step.dependOn(&run_ollama_test.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //

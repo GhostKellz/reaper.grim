@@ -1,31 +1,36 @@
-//! OpenAI API provider implementation.
+//! Azure OpenAI API provider implementation.
+//! Note: Azure OpenAI uses a different endpoint structure than standard OpenAI.
 
 const std = @import("std");
 const http = @import("http_types.zig");
 const vault = @import("../auth/vault.zig");
 const zhttp = @import("zhttp");
 
-pub const OpenAIProvider = struct {
+pub const AzureOpenAIProvider = struct {
     allocator: std.mem.Allocator,
     vault_ref: vault.SecretRef,
     api_key: ?[]u8 = null,
-    base_url: []const u8 = "https://api.openai.com/v1",
+    endpoint: []const u8, // e.g., "https://your-resource.openai.azure.com"
+    deployment: []const u8, // e.g., "gpt-4"
+    api_version: []const u8 = "2024-02-15-preview",
 
-    pub fn init(allocator: std.mem.Allocator, account: []const u8) OpenAIProvider {
+    pub fn init(allocator: std.mem.Allocator, account: []const u8, endpoint: []const u8, deployment: []const u8) AzureOpenAIProvider {
         return .{
             .allocator = allocator,
-            .vault_ref = vault.providerSecretRef(.openai, account, .api_key, null),
+            .vault_ref = vault.providerSecretRef(.azure_openai, account, .api_key, null),
+            .endpoint = endpoint,
+            .deployment = deployment,
         };
     }
 
-    pub fn deinit(self: *OpenAIProvider) void {
+    pub fn deinit(self: *AzureOpenAIProvider) void {
         if (self.api_key) |key| {
             self.allocator.free(key);
             self.api_key = null;
         }
     }
 
-    pub fn authenticate(self: *OpenAIProvider, vault_instance: *vault.Vault) !void {
+    pub fn authenticate(self: *AzureOpenAIProvider, vault_instance: *vault.Vault) !void {
         if (self.api_key) |key| {
             self.allocator.free(key);
         }
@@ -33,21 +38,20 @@ pub const OpenAIProvider = struct {
     }
 
     pub fn chat(
-        self: *OpenAIProvider,
+        self: *AzureOpenAIProvider,
         messages: []const http.Message,
-        model: []const u8,
+        model: []const u8, // This parameter is ignored for Azure; deployment is used instead
         max_tokens: ?u32,
         temperature: ?f32,
     ) !http.CompletionResponse {
+        _ = model; // Azure uses deployment name, not model parameter
         const api_key = self.api_key orelse return http.ProviderError.AuthenticationFailed;
 
-        // Build request JSON
+        // Build request JSON (OpenAI-compatible format)
         var request_json = std.ArrayList(u8){};
         defer request_json.deinit(self.allocator);
 
-        try request_json.appendSlice(self.allocator, "{\"model\":\"");
-        try request_json.appendSlice(self.allocator, model);
-        try request_json.appendSlice(self.allocator, "\",\"messages\":[");
+        try request_json.appendSlice(self.allocator, "{\"messages\":[");
 
         for (messages, 0..) |msg, i| {
             if (i > 0) try request_json.appendSlice(self.allocator, ",");
@@ -80,26 +84,48 @@ pub const OpenAIProvider = struct {
 
         try request_json.appendSlice(self.allocator, "}");
 
-        // Build auth header
-        const auth_header = try std.fmt.allocPrint(self.allocator, "Bearer {s}", .{api_key});
+        // Build auth header (Azure uses api-key header)
+        const auth_header = try std.fmt.allocPrint(self.allocator, "{s}", .{api_key});
         defer self.allocator.free(auth_header);
 
-        // Build URL
-        const url = try std.fmt.allocPrint(self.allocator, "{s}/chat/completions", .{self.base_url});
+        // Build Azure-specific URL
+        const url = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/openai/deployments/{s}/chat/completions?api-version={s}",
+            .{ self.endpoint, self.deployment, self.api_version },
+        );
         defer self.allocator.free(url);
 
-        // Make request
-        const response_body = try http.makeJsonRequest(
-            self.allocator,
-            .POST,
-            url,
-            auth_header,
-            request_json.items,
-        );
+        // Make request with Azure-specific headers
+        const response_body = try self.makeAzureRequest(url, request_json.items);
         defer self.allocator.free(response_body);
 
-        // Parse response
+        // Parse response (uses OpenAI-compatible format)
         return try parseCompletionResponse(self.allocator, response_body);
+    }
+
+    fn makeAzureRequest(self: *AzureOpenAIProvider, url: []const u8, body_json: []const u8) ![]u8 {
+        const api_key = self.api_key orelse return http.ProviderError.AuthenticationFailed;
+
+        var client = zhttp.Client.init(self.allocator, .{});
+        defer client.deinit();
+
+        var request = zhttp.Request.init(self.allocator, .POST, url);
+        defer request.deinit();
+
+        try request.addHeader("Content-Type", "application/json");
+        try request.addHeader("api-key", api_key);
+
+        request.setBody(zhttp.Body.fromString(body_json));
+
+        var response = try client.send(request);
+        defer response.deinit();
+
+        if (response.status < 200 or response.status >= 300) {
+            return mapHttpError(response.status);
+        }
+
+        return try response.readAll(10_000_000); // 10MB max
     }
 };
 
@@ -142,5 +168,15 @@ fn parseCompletionResponse(allocator: std.mem.Allocator, json: []const u8) !http
         .content = content,
         .finish_reason = finish_reason,
         .usage = usage,
+    };
+}
+
+fn mapHttpError(status_code: u16) http.ProviderError {
+    return switch (status_code) {
+        401, 403 => http.ProviderError.AuthenticationFailed,
+        429 => http.ProviderError.RateLimited,
+        400...499 => http.ProviderError.InvalidRequest,
+        500...599 => http.ProviderError.ServerError,
+        else => http.ProviderError.NetworkError,
     };
 }

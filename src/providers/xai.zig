@@ -1,31 +1,32 @@
-//! OpenAI API provider implementation.
+//! xAI (Grok) API provider implementation.
+//! Note: xAI uses an OpenAI-compatible API.
 
 const std = @import("std");
 const http = @import("http_types.zig");
 const vault = @import("../auth/vault.zig");
 const zhttp = @import("zhttp");
 
-pub const OpenAIProvider = struct {
+pub const XAIProvider = struct {
     allocator: std.mem.Allocator,
     vault_ref: vault.SecretRef,
     api_key: ?[]u8 = null,
-    base_url: []const u8 = "https://api.openai.com/v1",
+    base_url: []const u8 = "https://api.x.ai/v1",
 
-    pub fn init(allocator: std.mem.Allocator, account: []const u8) OpenAIProvider {
+    pub fn init(allocator: std.mem.Allocator, account: []const u8) XAIProvider {
         return .{
             .allocator = allocator,
-            .vault_ref = vault.providerSecretRef(.openai, account, .api_key, null),
+            .vault_ref = vault.providerSecretRef(.xai, account, .api_key, null),
         };
     }
 
-    pub fn deinit(self: *OpenAIProvider) void {
+    pub fn deinit(self: *XAIProvider) void {
         if (self.api_key) |key| {
             self.allocator.free(key);
             self.api_key = null;
         }
     }
 
-    pub fn authenticate(self: *OpenAIProvider, vault_instance: *vault.Vault) !void {
+    pub fn authenticate(self: *XAIProvider, vault_instance: *vault.Vault) !void {
         if (self.api_key) |key| {
             self.allocator.free(key);
         }
@@ -33,7 +34,7 @@ pub const OpenAIProvider = struct {
     }
 
     pub fn chat(
-        self: *OpenAIProvider,
+        self: *XAIProvider,
         messages: []const http.Message,
         model: []const u8,
         max_tokens: ?u32,
@@ -41,7 +42,7 @@ pub const OpenAIProvider = struct {
     ) !http.CompletionResponse {
         const api_key = self.api_key orelse return http.ProviderError.AuthenticationFailed;
 
-        // Build request JSON
+        // Build request JSON (OpenAI-compatible format)
         var request_json = std.ArrayList(u8){};
         defer request_json.deinit(self.allocator);
 
@@ -98,7 +99,7 @@ pub const OpenAIProvider = struct {
         );
         defer self.allocator.free(response_body);
 
-        // Parse response
+        // Parse response (uses OpenAI-compatible format)
         return try parseCompletionResponse(self.allocator, response_body);
     }
 };

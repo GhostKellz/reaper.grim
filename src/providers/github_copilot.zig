@@ -1,47 +1,117 @@
-//! OpenAI API provider implementation.
+//! GitHub Copilot API provider implementation with OAuth device flow
+//! Uses OpenAI-compatible API after authentication
 
 const std = @import("std");
 const http = @import("http_types.zig");
 const vault = @import("../auth/vault.zig");
+const oauth = @import("../auth/oauth_device.zig");
 const zhttp = @import("zhttp");
 
-pub const OpenAIProvider = struct {
+const GITHUB_COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"; // Official GitHub Copilot CLI client ID
+const DEVICE_CODE_URL = "https://github.com/login/device/code";
+const TOKEN_URL = "https://github.com/login/oauth/access_token";
+const COPILOT_API_URL = "https://api.githubcopilot.com";
+
+pub const GitHubCopilotProvider = struct {
     allocator: std.mem.Allocator,
     vault_ref: vault.SecretRef,
-    api_key: ?[]u8 = null,
-    base_url: []const u8 = "https://api.openai.com/v1",
+    access_token: ?[]u8 = null,
+    base_url: []const u8 = COPILOT_API_URL,
 
-    pub fn init(allocator: std.mem.Allocator, account: []const u8) OpenAIProvider {
+    pub fn init(allocator: std.mem.Allocator, account: []const u8) GitHubCopilotProvider {
         return .{
             .allocator = allocator,
-            .vault_ref = vault.providerSecretRef(.openai, account, .api_key, null),
+            .vault_ref = vault.providerSecretRef(.github_copilot, account, .access_token, null),
         };
     }
 
-    pub fn deinit(self: *OpenAIProvider) void {
-        if (self.api_key) |key| {
-            self.allocator.free(key);
-            self.api_key = null;
+    pub fn deinit(self: *GitHubCopilotProvider) void {
+        if (self.access_token) |token| {
+            self.allocator.free(token);
+            self.access_token = null;
         }
     }
 
-    pub fn authenticate(self: *OpenAIProvider, vault_instance: *vault.Vault) !void {
-        if (self.api_key) |key| {
-            self.allocator.free(key);
+    pub fn authenticate(self: *GitHubCopilotProvider, vault_instance: *vault.Vault) !void {
+        if (self.access_token) |token| {
+            self.allocator.free(token);
         }
-        self.api_key = try vault_instance.fetch(self.vault_ref);
+        self.access_token = try vault_instance.fetch(self.vault_ref);
+    }
+
+    /// Perform OAuth device flow authentication
+    pub fn authenticateWithDeviceFlow(self: *GitHubCopilotProvider, vault_instance: *vault.Vault) !void {
+        var device_flow = oauth.DeviceFlow.init(
+            self.allocator,
+            GITHUB_COPILOT_CLIENT_ID,
+            DEVICE_CODE_URL,
+            TOKEN_URL,
+        );
+
+        // Request device code
+        const device_code_response = try device_flow.requestDeviceCode(null);
+        defer device_code_response.deinit(self.allocator);
+
+        // Display instructions to user
+        var stdout = std.fs.File.stdout();
+        const message = try std.fmt.allocPrint(
+            self.allocator,
+            "\nGitHub Copilot Authentication\n" ++
+                "==============================\n\n" ++
+                "Please visit: {s}\n" ++
+                "And enter code: {s}\n\n" ++
+                "Waiting for authentication...\n",
+            .{ device_code_response.verification_uri, device_code_response.user_code },
+        );
+        defer self.allocator.free(message);
+        stdout.writeAll(message) catch {};
+
+        // Poll for token
+        const start_time = std.time.timestamp();
+        var poll_interval = device_code_response.interval;
+
+        while (true) {
+            const elapsed = std.time.timestamp() - start_time;
+            if (elapsed > device_code_response.expires_in) {
+                return oauth.DeviceFlowError.ExpiredToken;
+            }
+
+            std.Thread.sleep(poll_interval * std.time.ns_per_s);
+
+            const token_response = device_flow.pollForToken(device_code_response.device_code) catch |err| switch (err) {
+                oauth.DeviceFlowError.AuthorizationPending => continue,
+                oauth.DeviceFlowError.SlowDown => {
+                    poll_interval += 5; // Increase interval by 5 seconds
+                    continue;
+                },
+                else => return err,
+            };
+
+            // Successfully got token - store it
+            defer token_response.deinit(self.allocator);
+
+            try vault_instance.store(self.vault_ref, token_response.access_token);
+
+            if (self.access_token) |old_token| {
+                self.allocator.free(old_token);
+            }
+            self.access_token = try self.allocator.dupe(u8, token_response.access_token);
+
+            stdout.writeAll("\n✓ Authentication successful!\n") catch {};
+            break;
+        }
     }
 
     pub fn chat(
-        self: *OpenAIProvider,
+        self: *GitHubCopilotProvider,
         messages: []const http.Message,
         model: []const u8,
         max_tokens: ?u32,
         temperature: ?f32,
     ) !http.CompletionResponse {
-        const api_key = self.api_key orelse return http.ProviderError.AuthenticationFailed;
+        const access_token = self.access_token orelse return http.ProviderError.AuthenticationFailed;
 
-        // Build request JSON
+        // Build request JSON (OpenAI-compatible format)
         var request_json = std.ArrayList(u8){};
         defer request_json.deinit(self.allocator);
 
@@ -81,7 +151,7 @@ pub const OpenAIProvider = struct {
         try request_json.appendSlice(self.allocator, "}");
 
         // Build auth header
-        const auth_header = try std.fmt.allocPrint(self.allocator, "Bearer {s}", .{api_key});
+        const auth_header = try std.fmt.allocPrint(self.allocator, "Bearer {s}", .{access_token});
         defer self.allocator.free(auth_header);
 
         // Build URL
@@ -98,7 +168,7 @@ pub const OpenAIProvider = struct {
         );
         defer self.allocator.free(response_body);
 
-        // Parse response
+        // Parse response (uses OpenAI-compatible format)
         return try parseCompletionResponse(self.allocator, response_body);
     }
 };
